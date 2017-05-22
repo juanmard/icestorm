@@ -28,7 +28,7 @@
 
 int log_level = 0;
 
-static const int NUM_IMAGES = 4;
+static const int NUM_IMAGES = 10; //Ridotech: Antes 4
 static const int NUM_HEADERS = NUM_IMAGES + 1;
 static const int HEADER_SIZE = 32;
 
@@ -81,26 +81,56 @@ static void pad_to(std::ostream &ofs, uint32_t &file_offset, uint32_t target)
 class Image {
     std::ifstream ifs;
     uint32_t offs;
+	std::string image_name;  ///-> filename image.
+    bool save_name;			 ///-> save the name file?
 
 public:
-    Image(const char *filename) : ifs(filename, std::ifstream::binary) {}
+    Image(const char *filename, bool name_files=false) : ifs(filename, std::ifstream::binary), image_name(filename), save_name (name_files) {}
 
     size_t size();
     void write(std::ostream &ofs, uint32_t &file_offset);
     void place(uint32_t o) { offs = o; }
     uint32_t offset() const { return offs; }
+	const char* get_name ();
 };
+
+const char * Image::get_name ()
+{
+	return image_name.c_str();
+}
 
 size_t Image::size()
 {
     ifs.seekg (0, ifs.end);
     size_t length = ifs.tellg();
     ifs.seekg (0, ifs.beg);
+    
+	if (save_name) {
+		length += image_name.size ();
+    	length ++; // 0x00 end of string.
+	}
+
     return length;
 }
 
 void Image::write(std::ostream &ofs, uint32_t &file_offset)
 {
+	if (save_name) {
+		//--------------------------------- from image...
+		// FF 00 00 FF 7E AA 99 7E
+		//--------------------------------- save image...
+		// FF 00 'filename.bin' 00 00 FF 7E AA 99 7E
+		//----------------------------------------------
+		write_byte(ofs, file_offset, 0xff);
+		write_byte(ofs, file_offset, 0x00);
+		ofs << this->image_name;
+		file_offset += this->image_name.size ();
+		write_byte(ofs, file_offset, 0x00);
+
+		// Skip two first bytes (0xFF and 0x00) from image file.
+		ifs.seekg (2);
+    }
+
     write_file(ofs, file_offset, ifs);
 }
 
@@ -167,6 +197,9 @@ void usage()
     log(" -a<n>, -A<n>\n");
     log(" align images at 2^<n> bytes. -A also aligns image 0.\n");
     log("\n");
+    log(" -n\n");
+    log(" save name files in output image.\n");
+    log("\n");
     log(" -o filename\n");
     log(" write output image to file instead of stdout\n");
     log("\n");
@@ -179,6 +212,7 @@ void usage()
 int main(int argc, char **argv)
 {
     bool coldboot = false;
+    bool name_files = false;
     int por_image = 0;
     int image_count = 0;
     int align_bits = 0;
@@ -214,14 +248,17 @@ int main(int argc, char **argv)
                     break;
                 } else if (argv[i][j] == 'v') {
                     log_level++;
+                } else if (argv[i][j] == 'n') {
+                    name_files = true;
                 } else
                     usage();
             continue;
         }
 
+
         if (image_count >= NUM_IMAGES)
             error("Too many images supplied\n");
-        images[image_count++].reset(new Image(argv[i]));
+        images[image_count++].reset(new Image(argv[i], name_files));
     }
 
     if (!image_count)
@@ -241,7 +278,7 @@ int main(int argc, char **argv)
         images[i]->place(offs);
         offs += images[i]->size();
         align_offset(offs, align_bits);
-        info("Place image %d at %06x .. %06x.\n", i, int(images[i]->offset()), int(offs));
+        info("Place image %d at %06x .. %06x\t%s.\n", i, int(images[i]->offset()), int(offs), images[i]->get_name());
     }
 
     // Populate headers
