@@ -35,12 +35,21 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+//--------------------- predefiniciones ----------------
+void flash_4kB_subsector_erase(int addr);
+void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size);
+void test_multipack ();
+void test_get_vectors ();
+void get_comment (unsigned int vector);
+
+//--------- globales -----------
 struct ftdi_context ftdic;
 bool ftdic_open = false;
 bool verbose = false;
 bool ftdic_latency_set = false;
 unsigned char ftdi_latency;
 
+//------------------------------
 void check_rx()
 {
 	while (1) {
@@ -58,6 +67,7 @@ void error()
 	if (ftdic_open) {
 		if (ftdic_latency_set)
 			ftdi_set_latency_timer(&ftdic, ftdi_latency);
+	if (ftdic_open)
 		ftdi_usb_close(&ftdic);
 	}
 	ftdi_deinit(&ftdic);
@@ -334,6 +344,12 @@ void help(const char *progname)
 	fprintf(stderr, "    -t\n");
 	fprintf(stderr, "        just read the flash ID sequence\n");
 	fprintf(stderr, "\n");
+	fprintf(stderr, "    -m\n");
+	fprintf(stderr, "        just test multi image\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "    -g\n");
+	fprintf(stderr, "        get vectors from flash\n");
+	fprintf(stderr, "\n");
 	fprintf(stderr, "    -v\n");
 	fprintf(stderr, "        verbose output\n");
 	fprintf(stderr, "\n");
@@ -355,13 +371,15 @@ int main(int argc, char **argv)
 	bool dont_erase = false;
 	bool prog_sram = false;
 	bool test_mode = false;
+	bool test_multi = false;
+	bool get_vectors = false;
 	const char *filename = NULL;
 	const char *devstr = NULL;
 	enum ftdi_interface ifnum = INTERFACE_A;
 
 	int opt;
 	char *endptr;
-	while ((opt = getopt(argc, argv, "d:I:rR:o:cbnStv")) != -1)
+	while ((opt = getopt(argc, argv, "d:I:rR:o:cbnStmgv")) != -1)
 	{
 		switch (opt)
 		{
@@ -407,6 +425,12 @@ int main(int argc, char **argv)
 		case 'v':
 			verbose = true;
 			break;
+		case 'm':
+			test_multi = true;
+            break;
+		case 'g':
+			get_vectors = true;
+            break;
 		default:
 			help(argv[0]);
 		}
@@ -539,7 +563,7 @@ int main(int argc, char **argv)
 			error();
 		}
 
-		fprintf(stderr, "programming..\n");
+		fprintf(stderr, "Programming SRAM..\n");
 		while (1)
 		{
 			static unsigned char buffer[4096];
@@ -563,6 +587,14 @@ int main(int argc, char **argv)
 		send_byte(0x00);
 
 		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+	}
+	else if (test_multi)
+	{
+		test_multipack ();
+	}
+	else if (get_vectors)
+	{
+		test_get_vectors ();
 	}
 	else
 	{
@@ -715,5 +747,222 @@ int main(int argc, char **argv)
 	ftdi_usb_close(&ftdic);
 	ftdi_deinit(&ftdic);
 	return 0;
+}
+
+// ---------------------------------------------------------
+// Test multi image change second image vector.
+// ---------------------------------------------------------
+// Prueba para comprobar si modificando un vector del applet de iCE40HX
+// directamente desde la flash, se puede modificar el comportamiento de
+// la FPGA al reiniciar con warmboot.
+// 
+// Se modifica el vector de reset (address 0x09 - 3 bytes) por la dirección de
+// otra imagen de síntesis que contiene la flash y que se encuentra en la dirección 0x100.
+//
+void test_multipack ()
+{
+/*
+Se toma el applet del 'pack.bin' generado con la orden:
+
+$ icemulti -p1 -o pack.bin blink.bin hardware.bin
+
+Luego se tiene en el reset la síntesis de 'hardware.bin' (en la direción 0x8000) y
+en la dirección 0x100 tenemos 'blink.bin'. Y su applet es:
+
+$ hexdump -C -n256 pack.bin
+
+00000000  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000010  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000020  7e aa 99 7e 92 00 00 44  03 00 01 00 82 00 00 01  |~..~...D........|
+00000030  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000040  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000050  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000060  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000070  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000080  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000090  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+000000a0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+
+Cambiando los valores de los 3 bytes del vector de reset (dirección 0x09) por {0x00, 0x01, 0x00}
+se desvía el vector a la síntesis de 'blink.bin' y grabando 4kB (subsector) en la flash se
+selecciona otra síntesis.
+*/
+        uint8_t vector[]={0x00,0x01,0x00}; // Vector 'blink.bin' en 'pack.bin' (0x000100).
+        uint8_t buffer[0x001100]; // Tamaño del buffer a grabar 4kB (4096 bytes - 0x1000 bytes).
+
+		// ---------------------------------------------------------
+		// Reset de la flash.
+		// ---------------------------------------------------------
+		fprintf(stderr, "reset..\n");
+		set_gpio(1, 0);
+    	usleep(250000);
+		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+		flash_power_up();
+		flash_read_id();
+
+        // Leemos un subsector completo de la flash (4kB).
+    	fprintf(stderr, "Leyendo el primer subsector...\n");
+		flash_read (0, buffer, 0x1000);
+
+		// Se muestra lo leido.		
+		if (verbose) dump_buffer(0, buffer, 256);
+
+		// Se modifica el vector en el buffer leido.
+    	fprintf(stderr, "Modificando el vector de reset en buffer...\n");
+		buffer[0x09]=vector[0];
+		buffer[0x0A]=vector[1];
+		buffer[0x0B]=vector[2];
+
+        // Se borra el primer subsector (4kb) en flash.
+    	fprintf(stderr, "Borrando el primer subsector...\n");
+		flash_write_enable();
+		flash_4kB_subsector_erase(0x00);
+		flash_wait();
+
+		// Se programa el subsector por páginas de 256 bytes.
+		fprintf(stderr, "Programando...\n");
+        unsigned int page_size = 256;
+		unsigned int subsector_size = 0x1000; // 4kB = 4096 bytes = 0x1000 bytes
+		for ( int addr = 0; addr < subsector_size; addr += page_size) {
+			if (verbose) fprintf(stderr, "Grabar flash en 0x%04X\n", addr);
+			flash_write_enable();
+			flash_prog(addr, buffer+addr, page_size);
+			flash_wait();
+		}
+
+		// ---------------------------------------------------------
+		// Reset general.
+		// ---------------------------------------------------------
+		flash_power_down();
+		set_gpio(1, 1);
+		usleep(250000);
+		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+}
+
+//------------------------------------------------------------
+// Muestra el contenido de un buffer en formato hexadecimal.
+//------------------------------------------------------------
+void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size)
+{
+		// Para comprobar se imprime el buffer en pantalla.
+    	fprintf(stderr, "Buffer...\n");
+		int end_addr = begin_addr + size;
+		int size_line = 16;		
+		for (int addr = begin_addr; addr < end_addr; addr += size_line) {
+			fprintf(stderr, "%06X: |", addr);
+            for (int b=0; b<8; b++) fprintf(stderr," %02X", buffer[addr+b]);
+			fprintf(stderr, " |");
+            for (int b=0; b<8; b++) fprintf(stderr," %02X", buffer[addr+b+8]);           
+			fprintf(stderr, " |\n");
+		}
+}
+
+//------------------------------------------------------------
+// Borra un subsector (4kB) de la flash.
+//------------------------------------------------------------
+void flash_4kB_subsector_erase(int addr)
+{
+	fprintf(stderr, "erase 4kB subsector at 0x%06X..\n", addr);
+
+	uint8_t command[4] = { 0x20, (uint8_t)(addr >> 16), (uint8_t)(addr >> 8), (uint8_t)addr };
+	set_gpio(0, 0);
+	send_spi(command, 4);
+	set_gpio(1, 0);
+}
+
+// ---------------------------------------------------------
+// Test multi image change second image vector.
+// ---------------------------------------------------------
+// Se conecta a la flash y extrae los vectores del applet
+// y los muestra por pantalla.
+// El siguiente paso es poder modificar el orden de esta lista
+// de vectores para que puedan seleccionarse otras imágnes con
+// la opción del warmboot.
+//
+void test_get_vectors ()
+{
+/*
+Se toma el applet del 'pack.bin' generado con la orden:
+
+$ icemulti -p1 -o pack.bin blink.bin hardware.bin
+
+Luego se tiene en el reset la síntesis de 'hardware.bin' (en la direción 0x8000) y
+en la dirección 0x100 tenemos 'blink.bin'. Y su applet es:
+
+$ hexdump -C -n256 pack.bin
+
+00000000  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000010  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000020  7e aa 99 7e 92 00 00 44  03 00 01 00 82 00 00 01  |~..~...D........|
+00000030  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000040  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000050  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000060  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000070  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000080  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
+00000090  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+000000a0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+
+Cambiando los valores de los 3 bytes del vector de reset (dirección 0x09) por {0x00, 0x01, 0x00}
+se desvía el vector a la síntesis de 'blink.bin' y grabando 4kB (subsector) en la flash se
+selecciona otra síntesis.
+*/
+        unsigned int vector;
+        uint8_t buffer[0x001100]; // Tamaño del buffer a grabar 4kB (4096 bytes - 0x1000 bytes).
+
+		// ---------------------------------------------------------
+		// Reset de la flash.
+		// ---------------------------------------------------------
+		fprintf(stderr, "reset..\n");
+		set_gpio(1, 0);
+    	usleep(250000);
+		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+		flash_power_up();
+		flash_read_id();
+
+        // Leemos un subsector completo de la flash (4kB).
+    	fprintf(stderr, "Leyendo el primer subsector...\n");
+		flash_read (0, buffer, 0x1000);
+
+		// Se muestra lo leido.		
+		if (verbose) dump_buffer(0, buffer, 256);
+
+		// Mostrar los vectores (máximo 50).
+        for (unsigned int i=0, offset=0; i<50; i++, offset+=0x20) {
+            // Se comprueba antes de imprimir si es un vector válido.
+            if (buffer[offset]==0x7E && buffer[offset+1]==0xAA) { 
+				vector = (buffer[offset+9] << 16) + (buffer[offset+10] << 8) + buffer[offset+11];						
+				fprintf(stderr, "Vector %02d: 0x%06X - ", i, (unsigned int) vector);
+				get_comment (vector);				
+				switch (i){
+					case 0:  fprintf(stderr," (reset)\n");  break;
+					case 1:  fprintf(stderr," (boot 0)\n"); break;
+					case 2:  fprintf(stderr," (boot 1)\n"); break;
+					case 3:  fprintf(stderr," (boot 2)\n"); break;
+					case 4:  fprintf(stderr," (boot 3)\n"); break;
+					default: fprintf(stderr,"\n"); break;
+				}
+			}
+			else {
+				break;
+ 			}
+        }
+
+		// ---------------------------------------------------------
+		// Reset general.
+		// ---------------------------------------------------------
+		flash_power_down();
+		set_gpio(1, 1);
+		usleep(250000);
+		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+}
+
+void get_comment (unsigned int vector)
+{
+	char comment[30]="";
+
+	vector += 2;
+	flash_read (vector, (uint8_t *) comment, 25);
+	fprintf(stderr, "%s", comment);
 }
 
