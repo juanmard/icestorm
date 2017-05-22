@@ -41,6 +41,7 @@ void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size);
 void test_multipack ();
 void test_get_vectors ();
 void get_comment (unsigned int vector);
+void change_vector (unsigned int vector, unsigned int boot, uint8_t *buffer);
 
 //--------- globales -----------
 struct ftdi_context ftdic;
@@ -787,7 +788,7 @@ Cambiando los valores de los 3 bytes del vector de reset (dirección 0x09) por {
 se desvía el vector a la síntesis de 'blink.bin' y grabando 4kB (subsector) en la flash se
 selecciona otra síntesis.
 */
-        uint8_t vector[]={0x00,0x01,0x00}; // Vector 'blink.bin' en 'pack.bin' (0x000100).
+//        uint8_t vector[]={0x00,0x01,0x00}; // Vector 'blink.bin' en 'pack.bin' (0x000100).
         uint8_t buffer[0x001100]; // Tamaño del buffer a grabar 4kB (4096 bytes - 0x1000 bytes).
 
 		// ---------------------------------------------------------
@@ -808,10 +809,11 @@ selecciona otra síntesis.
 		if (verbose) dump_buffer(0, buffer, 256);
 
 		// Se modifica el vector en el buffer leido.
-    	fprintf(stderr, "Modificando el vector de reset en buffer...\n");
-		buffer[0x09]=vector[0];
-		buffer[0x0A]=vector[1];
-		buffer[0x0B]=vector[2];
+//    	fprintf(stderr, "Modificando el vector de reset en buffer...\n");
+//		buffer[0x09]=vector[0];
+//		buffer[0x0A]=vector[1];
+//		buffer[0x0B]=vector[2];
+		change_vector (6,3,buffer);		
 
         // Se borra el primer subsector (4kb) en flash.
     	fprintf(stderr, "Borrando el primer subsector...\n");
@@ -957,6 +959,9 @@ selecciona otra síntesis.
 		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
 }
 
+//---------------------------------------------
+// Muestra el comentario del bitstream.
+//---------------------------------------------
 void get_comment (unsigned int vector)
 {
 	char comment[30]="";
@@ -964,5 +969,39 @@ void get_comment (unsigned int vector)
 	vector += 2;
 	flash_read (vector, (uint8_t *) comment, 25);
 	fprintf(stderr, "%s", comment);
+}
+
+//--------------------------------------------------------
+// Cambia un vector boot por otro apuntado en el applet.
+// @param vector número de vector a cambiar.
+// @param boot   posición boot a intercambiar (0-reset, 1-boot0,....)
+//--------------------------------------------------------
+void change_vector (unsigned int vector, unsigned int boot, uint8_t *buffer)
+{
+	// Calculate address.
+    unsigned int addr_boot = boot*0x20;
+    unsigned int addr_vector = vector*0x20;
+
+	// Save vector boot in a temporal vector.
+    uint8_t vector_temp[3];
+    vector_temp[0] = buffer[addr_boot+9];
+    vector_temp[1] = buffer[addr_boot+10];
+    vector_temp[2] = buffer[addr_boot+11];
+
+	// Change boot vector.
+    buffer[addr_boot+9]  = buffer[addr_vector+9];
+    buffer[addr_boot+10] = buffer[addr_vector+10];
+    buffer[addr_boot+11] = buffer[addr_vector+11];
+
+	// Change vector.
+    buffer[addr_vector+9]  = vector_temp[0];
+    buffer[addr_vector+10]  = vector_temp[1];
+    buffer[addr_vector+11]  = vector_temp[2];
+	
+	// Info.
+    fprintf(stderr, "Intercambiados vectores: 0x%06X por 0x%06X\n",
+				    (buffer[addr_boot+9] << 16) + (buffer[addr_boot+10] << 8) + buffer[addr_boot+11],
+					(buffer[addr_vector+9] << 16) + (buffer[addr_vector+10] << 8) + buffer[addr_vector+11]);			
+		
 }
 
