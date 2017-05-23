@@ -35,10 +35,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#define NUM_VECTORS 10	// Este número puede obtenerse del tamaño del applet, ya que depende del número definido en icemulti con el que se haya generado la imagen grabada en la flash.
+
 //--------------------- predefiniciones ----------------
 void flash_4kB_subsector_erase(int addr);
 void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size);
-void test_multipack ();
+void test_change_vectors (unsigned int vector1, unsigned int vector2);
 void test_get_vectors ();
 void get_comment (unsigned int vector);
 void change_vector (unsigned int vector, unsigned int boot, uint8_t *buffer);
@@ -345,11 +347,11 @@ void help(const char *progname)
 	fprintf(stderr, "    -t\n");
 	fprintf(stderr, "        just read the flash ID sequence\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "    -m\n");
-	fprintf(stderr, "        just test multi image\n");
+	fprintf(stderr, "    -x <vector1> <vector2>\n");
+	fprintf(stderr, "        interchange two vectors.\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "    -g\n");
-	fprintf(stderr, "        get vectors from flash\n");
+	fprintf(stderr, "    -l\n");
+	fprintf(stderr, "        list vectors from flash.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "    -v\n");
 	fprintf(stderr, "        verbose output\n");
@@ -372,15 +374,16 @@ int main(int argc, char **argv)
 	bool dont_erase = false;
 	bool prog_sram = false;
 	bool test_mode = false;
-	bool test_multi = false;
 	bool get_vectors = false;
+	bool change_vectors = false;
+    unsigned int vector1, vector2;
 	const char *filename = NULL;
 	const char *devstr = NULL;
 	enum ftdi_interface ifnum = INTERFACE_A;
 
 	int opt;
-	char *endptr;
-	while ((opt = getopt(argc, argv, "d:I:rR:o:cbnStmgv")) != -1)
+	char *endptr=NULL;
+	while ((opt = getopt(argc, argv, "d:I:rR:o:cbnStgvx:l")) != -1)
 	{
 		switch (opt)
 		{
@@ -426,12 +429,17 @@ int main(int argc, char **argv)
 		case 'v':
 			verbose = true;
 			break;
-		case 'm':
-			test_multi = true;
+
+		case 'x':
+    		vector1 = strtol(argv[optind-1], NULL, 0);
+			vector2 = strtol(argv[optind], NULL, 0);
+			change_vectors = true;
             break;
-		case 'g':
+
+    	case 'l':
 			get_vectors = true;
             break;
+        
 		default:
 			help(argv[0]);
 		}
@@ -589,12 +597,16 @@ int main(int argc, char **argv)
 
 		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
 	}
-	else if (test_multi)
+	else if (change_vectors)
 	{
-		test_multipack ();
-	}
+		if ((vector1 <= NUM_VECTORS) && (vector2 <= NUM_VECTORS)) {
+			if (verbose) fprintf(stderr, "Intercambiar: %d, %d\n", vector1, vector2);
+			test_change_vectors (vector1, vector2);					
+		}		
+	}			
 	else if (get_vectors)
 	{
+
 		test_get_vectors ();
 	}
 	else
@@ -760,35 +772,8 @@ int main(int argc, char **argv)
 // Se modifica el vector de reset (address 0x09 - 3 bytes) por la dirección de
 // otra imagen de síntesis que contiene la flash y que se encuentra en la dirección 0x100.
 //
-void test_multipack ()
+void test_change_vectors (unsigned int vector1, unsigned int vector2)
 {
-/*
-Se toma el applet del 'pack.bin' generado con la orden:
-
-$ icemulti -p1 -o pack.bin blink.bin hardware.bin
-
-Luego se tiene en el reset la síntesis de 'hardware.bin' (en la direción 0x8000) y
-en la dirección 0x100 tenemos 'blink.bin'. Y su applet es:
-
-$ hexdump -C -n256 pack.bin
-
-00000000  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
-00000010  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-00000020  7e aa 99 7e 92 00 00 44  03 00 01 00 82 00 00 01  |~..~...D........|
-00000030  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-00000040  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
-00000050  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-00000060  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
-00000070  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-00000080  7e aa 99 7e 92 00 00 44  03 00 80 00 82 00 00 01  |~..~...D........|
-00000090  08 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-000000a0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
-
-Cambiando los valores de los 3 bytes del vector de reset (dirección 0x09) por {0x00, 0x01, 0x00}
-se desvía el vector a la síntesis de 'blink.bin' y grabando 4kB (subsector) en la flash se
-selecciona otra síntesis.
-*/
-//        uint8_t vector[]={0x00,0x01,0x00}; // Vector 'blink.bin' en 'pack.bin' (0x000100).
         uint8_t buffer[0x001100]; // Tamaño del buffer a grabar 4kB (4096 bytes - 0x1000 bytes).
 
 		// ---------------------------------------------------------
@@ -809,11 +794,7 @@ selecciona otra síntesis.
 		if (verbose) dump_buffer(0, buffer, 256);
 
 		// Se modifica el vector en el buffer leido.
-//    	fprintf(stderr, "Modificando el vector de reset en buffer...\n");
-//		buffer[0x09]=vector[0];
-//		buffer[0x0A]=vector[1];
-//		buffer[0x0B]=vector[2];
-		change_vector (6,3,buffer);		
+		change_vector (vector1, vector2, buffer);		
 
         // Se borra el primer subsector (4kb) en flash.
     	fprintf(stderr, "Borrando el primer subsector...\n");
