@@ -41,9 +41,9 @@
 void flash_4kB_subsector_erase(int addr);
 void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size);
 void test_change_vectors (unsigned int vector1, unsigned int vector2);
-void test_get_vectors ();
+void test_list_vectors ();
 void get_comment (unsigned int vector);
-void change_vector (unsigned int vector, unsigned int boot, uint8_t *buffer);
+void change_vector (unsigned int vector, unsigned int vector1, uint8_t *buffer);
 
 //--------- globales -----------
 struct ftdi_context ftdic;
@@ -374,13 +374,16 @@ int main(int argc, char **argv)
 	bool dont_erase = false;
 	bool prog_sram = false;
 	bool test_mode = false;
-	bool get_vectors = false;
+	bool list_vectors = false;
 	bool change_vectors = false;
     unsigned int vector1, vector2;
 	const char *filename = NULL;
 	const char *devstr = NULL;
 	enum ftdi_interface ifnum = INTERFACE_A;
 
+	// ---------------------------------------------------------
+	// Parse options
+	// ---------------------------------------------------------	
 	int opt;
 	char *endptr=NULL;
 	while ((opt = getopt(argc, argv, "d:I:rR:o:cbnStgvx:l")) != -1)
@@ -437,7 +440,7 @@ int main(int argc, char **argv)
             break;
 
     	case 'l':
-			get_vectors = true;
+			list_vectors = true;
             break;
         
 		default:
@@ -445,14 +448,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (read_mode + check_mode + prog_sram + test_mode > 1)
+	// ---------------------------------------------------------
+	// Options check
+	// ---------------------------------------------------------	
+	if (read_mode + check_mode + prog_sram + test_mode + list_vectors > 1)
 		help(argv[0]);
 
 	if (bulk_erase && dont_erase)
 		help(argv[0]);
 
 	if (optind+1 != argc && !test_mode) {
-		if (bulk_erase && optind == argc)
+		if ((bulk_erase | list_vectors) && optind == argc)
 			filename = "/dev/null";
 		else
 			help(argv[0]);
@@ -462,7 +468,6 @@ int main(int argc, char **argv)
 	// ---------------------------------------------------------
 	// Initialize USB connection to FT2232H
 	// ---------------------------------------------------------
-
 	fprintf(stderr, "init..\n");
 
 	ftdi_init(&ftdic);
@@ -523,7 +528,9 @@ int main(int argc, char **argv)
 	set_gpio(1, 1);
 	usleep(100000);
 
-
+	// ---------------------------------------------------------
+	// Option Test
+	// ---------------------------------------------------------	
 	if (test_mode)
 	{
 		fprintf(stderr, "reset..\n");
@@ -544,12 +551,14 @@ int main(int argc, char **argv)
 
 		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
 	}
+	// ---------------------------------------------------------
+	// Option Program SRAM
+	// ---------------------------------------------------------	
 	else if (prog_sram)
 	{
 		// ---------------------------------------------------------
 		// Reset
 		// ---------------------------------------------------------
-
 		fprintf(stderr, "reset..\n");
 
 		set_gpio(0, 0);
@@ -564,7 +573,6 @@ int main(int argc, char **argv)
 		// ---------------------------------------------------------
 		// Program
 		// ---------------------------------------------------------
-
 		FILE *f = (strcmp(filename, "-") == 0) ? stdin :
 			fopen(filename, "rb");
 		if (f == NULL) {
@@ -597,18 +605,26 @@ int main(int argc, char **argv)
 
 		fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
 	}
+	// ---------------------------------------------------------
+	// Option list vectors
+	// ---------------------------------------------------------	
+	else if (list_vectors)
+	{
+		test_list_vectors ();
+	}
+	// ---------------------------------------------------------
+	// Option change vectors
+	// ---------------------------------------------------------	
 	else if (change_vectors)
 	{
 		if ((vector1 <= NUM_VECTORS) && (vector2 <= NUM_VECTORS)) {
-			if (verbose) fprintf(stderr, "Intercambiar: %d, %d\n", vector1, vector2);
+			if (verbose) fprintf(stderr, "Interchange: %d, %d\n", vector1, vector2);
 			test_change_vectors (vector1, vector2);					
 		}		
-	}			
-	else if (get_vectors)
-	{
-
-		test_get_vectors ();
 	}
+	// ---------------------------------------------------------
+	// Option Program/Read flash with image in/out file).
+	// ---------------------------------------------------------				
 	else
 	{
 		// ---------------------------------------------------------
@@ -631,7 +647,7 @@ int main(int argc, char **argv)
 		// Program
 		// ---------------------------------------------------------
 
-		if (!read_mode && !check_mode)
+		if (!read_mode && !check_mode && !list_vectors)
 		{
 			FILE *f = (strcmp(filename, "-") == 0) ? stdin :
 				fopen(filename, "rb");
@@ -669,7 +685,7 @@ int main(int argc, char **argv)
 				}
 			}
 
-			fprintf(stderr, "programming..\n");
+			fprintf(stderr, "Programming..\n");
 
 			for (int rc, addr = 0; true; addr += rc) {
 				uint8_t buffer[256];
@@ -689,7 +705,6 @@ int main(int argc, char **argv)
 		// ---------------------------------------------------------
 		// Read/Verify
 		// ---------------------------------------------------------
-
 		if (read_mode)
 		{
 			FILE *f = (strcmp(filename, "-") == 0) ? stdout :
@@ -753,7 +768,6 @@ int main(int argc, char **argv)
 	// ---------------------------------------------------------
 	// Exit
 	// ---------------------------------------------------------
-
 	fprintf(stderr, "Bye.\n");
 	ftdi_set_latency_timer(&ftdic, ftdi_latency);
 	ftdi_disable_bitbang(&ftdic);
@@ -763,7 +777,7 @@ int main(int argc, char **argv)
 }
 
 // ---------------------------------------------------------
-// Test multi image change second image vector.
+// Test change vectors from applet.
 // ---------------------------------------------------------
 // Prueba para comprobar si modificando un vector del applet de iCE40HX
 // directamente desde la flash, se puede modificar el comportamiento de
@@ -777,7 +791,7 @@ void test_change_vectors (unsigned int vector1, unsigned int vector2)
         uint8_t buffer[0x001100]; // Tamaño del buffer a grabar 4kB (4096 bytes - 0x1000 bytes).
 
 		// ---------------------------------------------------------
-		// Reset de la flash.
+		// Reset flash.
 		// ---------------------------------------------------------
 		fprintf(stderr, "reset..\n");
 		set_gpio(1, 0);
@@ -790,7 +804,7 @@ void test_change_vectors (unsigned int vector1, unsigned int vector2)
     	fprintf(stderr, "Leyendo el primer subsector...\n");
 		flash_read (0, buffer, 0x1000);
 
-		// Se muestra lo leido.		
+		// Se muestra lo leido si existe la opción.		
 		if (verbose) dump_buffer(0, buffer, 256);
 
 		// Se modifica el vector en el buffer leido.
@@ -807,7 +821,7 @@ void test_change_vectors (unsigned int vector1, unsigned int vector2)
         unsigned int page_size = 256;
 		unsigned int subsector_size = 0x1000; // 4kB = 4096 bytes = 0x1000 bytes
 		for ( int addr = 0; addr < subsector_size; addr += page_size) {
-			if (verbose) fprintf(stderr, "Grabar flash en 0x%04X\n", addr);
+			if (verbose) fprintf(stderr, "Grabar flash en 0x%04X.\n", addr);
 			flash_write_enable();
 			flash_prog(addr, buffer+addr, page_size);
 			flash_wait();
@@ -862,7 +876,7 @@ void flash_4kB_subsector_erase(int addr)
 // de vectores para que puedan seleccionarse otras imágnes con
 // la opción del warmboot.
 //
-void test_get_vectors ()
+void test_list_vectors ()
 {
 /*
 Se toma el applet del 'pack.bin' generado con la orden:
@@ -952,37 +966,38 @@ void get_comment (unsigned int vector)
 	fprintf(stderr, "%s", comment);
 }
 
-//--------------------------------------------------------
-// Cambia un vector boot por otro apuntado en el applet.
-// @param vector número de vector a cambiar.
-// @param boot   posición boot a intercambiar (0-reset, 1-boot0,....)
-//--------------------------------------------------------
-void change_vector (unsigned int vector, unsigned int boot, uint8_t *buffer)
+//-----------------------------------------------------------------------
+// Intercambia dos vectores en la zona del applet.
+// @param vector1 primer número de vector a intercambiar.
+// @param vector2 segundo número de vector a intercambiar.
+// @param buffer  zona de memoria donde se encuentra el applet.
+//-----------------------------------------------------------------------
+void change_vector (unsigned int vector1, unsigned int vector2, uint8_t *buffer)
 {
 	// Calculate address.
-    unsigned int addr_boot = boot*0x20;
-    unsigned int addr_vector = vector*0x20;
+    unsigned int addr_vector1 = vector1*0x20;
+    unsigned int addr_vector2 = vector2*0x20;
 
-	// Save vector boot in a temporal vector.
+	// Save vector vector1 in a temporal vector.
     uint8_t vector_temp[3];
-    vector_temp[0] = buffer[addr_boot+9];
-    vector_temp[1] = buffer[addr_boot+10];
-    vector_temp[2] = buffer[addr_boot+11];
+    vector_temp[0] = buffer[addr_vector1+9];
+    vector_temp[1] = buffer[addr_vector1+10];
+    vector_temp[2] = buffer[addr_vector1+11];
 
-	// Change boot vector.
-    buffer[addr_boot+9]  = buffer[addr_vector+9];
-    buffer[addr_boot+10] = buffer[addr_vector+10];
-    buffer[addr_boot+11] = buffer[addr_vector+11];
+	// Change vector1 vector.
+    buffer[addr_vector1+9]  = buffer[addr_vector2+9];
+    buffer[addr_vector1+10] = buffer[addr_vector2+10];
+    buffer[addr_vector1+11] = buffer[addr_vector2+11];
 
 	// Change vector.
-    buffer[addr_vector+9]  = vector_temp[0];
-    buffer[addr_vector+10]  = vector_temp[1];
-    buffer[addr_vector+11]  = vector_temp[2];
+    buffer[addr_vector2+9]  = vector_temp[0];
+    buffer[addr_vector2+10] = vector_temp[1];
+    buffer[addr_vector2+11] = vector_temp[2];
 	
 	// Info.
-    fprintf(stderr, "Intercambiados vectores: 0x%06X por 0x%06X\n",
-				    (buffer[addr_boot+9] << 16) + (buffer[addr_boot+10] << 8) + buffer[addr_boot+11],
-					(buffer[addr_vector+9] << 16) + (buffer[addr_vector+10] << 8) + buffer[addr_vector+11]);			
+    fprintf(stderr, "Intercambiados vectores: 0x%06X por 0x%06X.\n",
+				    (buffer[addr_vector1+9] << 16) + (buffer[addr_vector1+10] << 8) + buffer[addr_vector1+11],
+					(buffer[addr_vector2+9] << 16) + (buffer[addr_vector2+10] << 8) + buffer[addr_vector2+11]);			
 		
 }
 
