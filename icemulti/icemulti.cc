@@ -28,7 +28,7 @@
 
 int log_level = 0;
 
-static const int NUM_IMAGES = 10; //Ridotech: Antes 4
+static const int NUM_IMAGES = 127;
 static const int NUM_HEADERS = NUM_IMAGES + 1;
 static const int HEADER_SIZE = 32;
 
