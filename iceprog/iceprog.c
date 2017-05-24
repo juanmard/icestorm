@@ -35,7 +35,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#define NUM_VECTORS 10	// Este número puede obtenerse del tamaño del applet, ya que depende del número definido en icemulti con el que se haya generado la imagen grabada en la flash.
+#define NUM_VECTORS 128	// Este número puede obtenerse del tamaño del applet, ya que depende del número definido en icemulti con el que se haya generado la imagen grabada en la flash.
+#define MAX_VECTORS_SHOW 128
 
 //--------------------- predefiniciones ----------------
 void flash_4kB_subsector_erase(int addr);
@@ -348,10 +349,10 @@ void help(const char *progname)
 	fprintf(stderr, "        just read the flash ID sequence\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "    -x <vector1> <vector2>\n");
-	fprintf(stderr, "        interchange two vectors.\n");
+	fprintf(stderr, "        interchange two vectors from applet flash.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "    -l\n");
-	fprintf(stderr, "        list vectors from flash.\n");
+	fprintf(stderr, "        list vectors from applet flash.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "    -v\n");
 	fprintf(stderr, "        verbose output\n");
@@ -801,7 +802,7 @@ void test_change_vectors (unsigned int vector1, unsigned int vector2)
 		flash_read_id();
 
         // Leemos un subsector completo de la flash (4kB).
-    	fprintf(stderr, "Leyendo el primer subsector...\n");
+    	fprintf(stderr, "Reading first subsector...\n");
 		flash_read (0, buffer, 0x1000);
 
 		// Se muestra lo leido si existe la opción.		
@@ -811,17 +812,17 @@ void test_change_vectors (unsigned int vector1, unsigned int vector2)
 		change_vector (vector1, vector2, buffer);		
 
         // Se borra el primer subsector (4kb) en flash.
-    	fprintf(stderr, "Borrando el primer subsector...\n");
+    	fprintf(stderr, "Erasing first subsector...\n");
 		flash_write_enable();
 		flash_4kB_subsector_erase(0x00);
 		flash_wait();
 
 		// Se programa el subsector por páginas de 256 bytes.
-		fprintf(stderr, "Programando...\n");
+		fprintf(stderr, "Programing...\n");
         unsigned int page_size = 256;
 		unsigned int subsector_size = 0x1000; // 4kB = 4096 bytes = 0x1000 bytes
 		for ( int addr = 0; addr < subsector_size; addr += page_size) {
-			if (verbose) fprintf(stderr, "Grabar flash en 0x%04X.\n", addr);
+			if (verbose) fprintf(stderr, "Programing flash in 0x%04X.\n", addr);
 			flash_write_enable();
 			flash_prog(addr, buffer+addr, page_size);
 			flash_wait();
@@ -859,7 +860,7 @@ void dump_buffer (unsigned int begin_addr, uint8_t *buffer, unsigned int size)
 //------------------------------------------------------------
 void flash_4kB_subsector_erase(int addr)
 {
-	fprintf(stderr, "erase 4kB subsector at 0x%06X..\n", addr);
+	fprintf(stderr, "Erasing 4kB subsector at 0x%06X..\n", addr);
 
 	uint8_t command[4] = { 0x20, (uint8_t)(addr >> 16), (uint8_t)(addr >> 8), (uint8_t)addr };
 	set_gpio(0, 0);
@@ -918,18 +919,18 @@ selecciona otra síntesis.
 		flash_read_id();
 
         // Leemos un subsector completo de la flash (4kB).
-    	fprintf(stderr, "Leyendo el primer subsector...\n");
+    	fprintf(stderr, "Reading first subsector...\n");
 		flash_read (0, buffer, 0x1000);
 
 		// Se muestra lo leido.		
 		if (verbose) dump_buffer(0, buffer, 256);
 
-		// Mostrar los vectores (máximo 50).
-        for (unsigned int i=0, offset=0; i<50; i++, offset+=0x20) {
+		// Mostrar los vectores (máximo MAX_VECTORS_SHOW).
+        for (unsigned int i=0, offset=0; i<MAX_VECTORS_SHOW; i++, offset+=0x20) {
             // Se comprueba antes de imprimir si es un vector válido.
             if (buffer[offset]==0x7E && buffer[offset+1]==0xAA) { 
 				vector = (buffer[offset+9] << 16) + (buffer[offset+10] << 8) + buffer[offset+11];						
-				fprintf(stderr, "Vector %02d: 0x%06X - ", i, (unsigned int) vector);
+				fprintf(stderr, "Vector %03d: 0x%06X - ", i, (unsigned int) vector);
 				get_comment (vector);				
 				switch (i){
 					case 0:  fprintf(stderr," (reset)\n");  break;
@@ -995,7 +996,7 @@ void change_vector (unsigned int vector1, unsigned int vector2, uint8_t *buffer)
     buffer[addr_vector2+11] = vector_temp[2];
 	
 	// Info.
-    fprintf(stderr, "Intercambiados vectores: 0x%06X por 0x%06X.\n",
+    fprintf(stderr, "Interchange vectors: 0x%06X por 0x%06X.\n",
 				    (buffer[addr_vector1+9] << 16) + (buffer[addr_vector1+10] << 8) + buffer[addr_vector1+11],
 					(buffer[addr_vector2+9] << 16) + (buffer[addr_vector2+10] << 8) + buffer[addr_vector2+11]);			
 		
