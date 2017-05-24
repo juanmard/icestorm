@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -191,7 +192,7 @@ void usage()
     log(" -c\n");
     log(" coldboot mode, power on reset image is selected by CBSEL0/CBSEL1\n");
     log("\n");
-    log(" -p0, -p1, -p2, -p3\n");
+    log(" -p0, -p1, -p2, ...\n");
     log(" select power on reset image when not using coldboot mode\n");
     log("\n");
     log(" -a<n>, -A<n>\n");
@@ -227,8 +228,9 @@ int main(int argc, char **argv)
             for (int j = 1; argv[i][j]; j++)
                 if (argv[i][j] == 'c') {
                     coldboot = true;
-                } else if (argv[i][j] == 'p' && argv[i][j+1]) {
-                    por_image = argv[i][++j] - '0';
+                } else if (argv[i][j] == 'p') {
+                    por_image = strtol (&argv[i][++j], NULL, 0);
+					j += strlen(&argv[i][j])+1;
                 } else if (argv[i][j] == 'a' || argv[i][j] == 'A') {
                     align_first = argv[i][j] == 'A';
                     if (argv[i][j+1])
@@ -254,7 +256,6 @@ int main(int argc, char **argv)
                     usage();
             continue;
         }
-
 
         if (image_count >= NUM_IMAGES)
             error("Too many images supplied\n");
