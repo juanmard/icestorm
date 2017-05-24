@@ -213,7 +213,7 @@ void usage()
 int main(int argc, char **argv)
 {
     bool coldboot = false;
-    bool name_files = false;
+    bool save_name = false;
     int por_image = 0;
     int image_count = 0;
     int align_bits = 0;
@@ -224,14 +224,16 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++)
     {
-	if (argv[i][0] == '-' && argv[i][1]) {
-            for (int j = 1; argv[i][j]; j++)
+		if (argv[i][0] == '-' && argv[i][1]) {
+            for (int j = 1; argv[i][j]; j++) {
                 if (argv[i][j] == 'c') {
                     coldboot = true;
-                } else if (argv[i][j] == 'p') {
+                }
+				else if (argv[i][j] == 'p') {
                     por_image = strtol (&argv[i][++j], NULL, 0);
-					j += strlen(&argv[i][j])+1;
-                } else if (argv[i][j] == 'a' || argv[i][j] == 'A') {
+					j += strlen(&argv[i][j])-1;
+                }
+				else if (argv[i][j] == 'a' || argv[i][j] == 'A') {
                     align_first = argv[i][j] == 'A';
                     if (argv[i][j+1])
                         align_bits = atoi(&argv[i][j+1]);
@@ -240,26 +242,36 @@ int main(int argc, char **argv)
                     else
                         usage();
                     break;
-                } else if (argv[i][j] == 'o') {
-                    if (argv[i][j+1])
+                }
+				else if (argv[i][j] == 'o') {
+                    if (argv[i][j+1]) {
                         outfile_name = &argv[i][j+1];
-                    else if(i+1 < argc)
+					}
+                    else if(i+1 < argc) {
                         outfile_name = argv[++i];
-                    else
+					}
+                    else {
                         usage();
+					}	
                     break;
-                } else if (argv[i][j] == 'v') {
+                }
+				else if (argv[i][j] == 'v') {
                     log_level++;
-                } else if (argv[i][j] == 'n') {
-                    name_files = true;
-                } else
+                }
+				else if (argv[i][j] == 'n') {
+                    save_name = true;
+                }
+				else {
                     usage();
-            continue;
-        }
+				}
+			}
+			continue;
+		}
 
-        if (image_count >= NUM_IMAGES)
+        if (image_count >= NUM_IMAGES) {
             error("Too many images supplied\n");
-        images[image_count++].reset(new Image(argv[i], name_files));
+		}
+        images[image_count++].reset(new Image(argv[i], save_name));
     }
 
     if (!image_count)
